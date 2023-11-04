@@ -1,0 +1,18 @@
+cabal-version:      3.0
+name:               dtnn
+version:            0.1.0.0
+synopsis:           Dependent Types Neural Networks
+homepage:           https://github.com/isaac025/dtnn
+author:             Isaac Lopez
+maintainer:         isaac.lopez@upr.edu
+category:           Artificial Intelligence
+build-type:         Simple
+
+executable dtnn
+    ghc-options:      -Wall
+    main-is:          Main.hs
+    -- other-modules:
+    -- other-extensions:
+    build-depends:    base ^>=4.17.2.0
+    hs-source-dirs:   src
+    default-language: Haskell2010
