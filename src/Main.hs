@@ -22,6 +22,17 @@ data Network :: Nat -> [Nat] -> Nat -> Type where
 
 infixr 5 :&~
 
+data OpaqueNet :: Nat -> Nat -> Type where
+    ONet :: Network i hs o -> OpaqueNet i o
+
+logistic :: (Floating a) => a -> a
+logistic x = 1 / (1 + exp (-x))
+
+logistic' :: (Floating a) => a -> a
+logistic' x = logix * (1 - logix)
+  where
+    logix = logistic x
+
 randomWeights :: (MonadRandom m, KnownNat i, KnownNat o) => m (Weights i o)
 randomWeights i o = do
     seed1 :: Int <- getRandom
@@ -31,20 +42,16 @@ randomWeights i o = do
     pure $ W wb wn
 
 randomNet :: forall m i hs o. (MonadRandom m, SingI hs, KnownNat i, KnownNat o) => m (Network i hs o)
-randomNet = go sing
-  where
-    go :: forall h hs'. (KnownNat h) => Sing hs' -> m (Network h hs' o)
-    go = \case
-        SNil -> O <$> randomWeights
-        SNat `SCons` ss -> (:&~) <$> randomWeights <*> go ss
+randomNet = randomNet' sing
 
-logistic :: (Floating a) => a -> a
-logistic x = 1 / (1 + exp (-x))
+randomNet' :: forall m i hs o. (MonadRandom m, KnownNat i, KnownNat o) => Sing hs -> m (Network i hs o)
+randomNet' = \case
+    SNil -> O <$> randomWeights
+    SNat `SCons` ss -> (:&~) <$> randomWeights <*> randomNet' ss
 
-logistic' :: (Floating a) => a -> a
-logistic' x = logix * (1 - logix)
-  where
-    logix = logistic x
+randomONet :: (MonadRandom m, KnownNat i, KnownNat o) => [Integer] -> m (OpaqueNet i o)
+randomONet hs = case toSing hs of
+    SomeSing ss -> ONet <$> randomNet' ss
 
 runLayer :: (KnownNat i, KnownNat o) => Weights i o -> R i -> R o
 runLayer (W wb wn) v = wb + wn #> v
@@ -55,6 +62,17 @@ runNet = \case
     (w :&~ n') -> \(!v) ->
         let v' = logistic (runLayer w v)
          in runNet n' v'
+
+runOpaqueNet :: (KnownNat i, KnownNat o) => OpaqueNet i o -> R i -> R o
+runOpaqueNet (ONet n) = runNet n
+
+numHiddens :: OpaqueNet i o -> Int
+numHiddens (ONet n) = go n
+  where
+    go :: Network i hs o -> Int
+    go = \case
+        O _ -> O
+        _ :&~ n' -> 1 + go n'
 
 train ::
     forall i hs o.
@@ -140,16 +158,9 @@ netTest rate n = do
 
 main :: IO ()
 main = do
-    args <- getArgs
-    let n = readMaybe =<< (args !!? 0)
-        rate = readMaybe =<< (args !!? 1)
-    putStrLn "Training network..."
-    putStrLn
-        =<< evalRandIO
-            ( netTest
-                (fromMaybe 0.25 rate)
-                (fromMaybe 500000 n)
-            )
-  where
-    (!!?) :: [a] -> Int -> Maybe a
-    xs !!? i = listToMaybe (drop i xs)
+    putStrLn "What hidden layer structure do you want?"
+    hs <- readLn
+    n <- randomONet hs
+    case n of
+        ONet (net :: Network 10 hs 3) -> do
+            print net
