@@ -9,10 +9,18 @@ category:           Artificial Intelligence
 build-type:         Simple
 
 executable dtnn
-    ghc-options:      -Wall
+    ghc-options:      -Wall -O2
     main-is:          Main.hs
     -- other-modules:
-    -- other-extensions:
+    default-extensions:
+        GADTs
+        KindSignatures
+        ScopedTypeVariables
+        TypeApplications
+        BangPatterns
     build-depends:    base ^>=4.17.2.0
+                    , singletons
+                    , hmatrix
+                    , MonadRandom
     hs-source-dirs:   src
     default-language: Haskell2010
