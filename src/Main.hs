@@ -1,25 +1,28 @@
 module Main where
 
+import Control.Monad
 import Control.Monad.Random
 import Data.Kind
 import Data.List
 import Data.Maybe
-import Numeric.LinearAlgebra
+import Data.Singletons
+import GHC.TypeLits
+import Numeric.LinearAlgebra.Static
 import System.Environment
 import Text.Read
 
-data Weights = W
-    { wBiases :: !(Vector Double) -- n
-    , wNodes :: !(Matrix Double) -- n x m
+data Weights i o = W
+    { wBiases :: !(R o)
+    , wNodes :: !(L o i)
     }
 
-data Network :: Type where
-    O :: !Weights -> Network
-    (:&~) :: !Weights -> !Network -> Network
+data Network :: Nat -> [Nat] -> Nat -> Type where
+    O :: !(Weights i o) -> Network i '[] o
+    (:&~) :: (KnownNat h) => !(Weights i h) -> !(Network h hs o) -> Network i (h ': hs) o
 
 infixr 5 :&~
 
-randomWeights :: (MonadRandom m) => Int -> Int -> m Weights
+randomWeights :: (MonadRandom m, KnownNat i, KnownNat o) => m (Weights i o)
 randomWeights i o = do
     seed1 :: Int <- getRandom
     seed2 :: Int <- getRandom
@@ -27,9 +30,13 @@ randomWeights i o = do
         wn = uniformSample seed2 o (replicate i (-1, 1))
     pure $ W wb wn
 
-randomNet :: (MonadRandom m) => Int -> [Int] -> Int -> m Network
-randomNet i [] o = O <$> randomWeights i o
-randomNet i (h : hs) o = (:&~) <$> randomWeights i h <*> randomNet h hs o
+randomNet :: forall m i hs o. (MonadRandom m, SingI hs, KnownNat i, KnownNat o) => m (Network i hs o)
+randomNet = go sing
+  where
+    go :: forall h hs'. (KnownNat h) => Sing hs' -> m (Network h hs' o)
+    go = \case
+        SNil -> O <$> randomWeights
+        SNat `SCons` ss -> (:&~) <$> randomWeights <*> go ss
 
 logistic :: (Floating a) => a -> a
 logistic x = 1 / (1 + exp (-x))
@@ -39,33 +46,38 @@ logistic' x = logix * (1 - logix)
   where
     logix = logistic x
 
-runLayer :: Weights -> Vector Double -> Vector Double
+runLayer :: (KnownNat i, KnownNat o) => Weights i o -> R i -> R o
 runLayer (W wb wn) v = wb + wn #> v
 
-runNet :: Network -> Vector Double -> Vector Double
-runNet (O w) !v = logistic (runLayer w v)
-runNet (w :&~ n) !v =
-    let v' = logistic (runLayer w v)
-     in runNet n v'
+runNet :: (KnownNat i, KnownNat o) => Network i hs o -> R i -> R o
+runNet = \case
+    O w -> \(!v) -> logistic (runLayer w v)
+    (w :&~ n') -> \(!v) ->
+        let v' = logistic (runLayer w v)
+         in runNet n' v'
 
 train ::
+    forall i hs o.
+    (KnownNat i, KnownNat o) =>
     -- | learning rate
     Double ->
     -- | input vector
-    Vector Double ->
+    R i ->
     -- | target vector
-    Vector Double ->
+    R o ->
     -- | network to train
-    Network ->
-    Network
+    Network i hs o ->
+    Network i hs o
 train rate x0 target = fst . go x0
   where
     go ::
-        Vector Double ->
+        forall j js.
+        (KnownNat j) =>
+        R j ->
         -- \^ input vector
-        Network ->
+        Network j js o ->
         -- \^ network to train
-        (Network, Vector Double)
+        (Network j js o, R)
     go !x (O w@(W wb wn)) =
         let y = runLayer w x
             -- the gradient (how much y affects the error)

@@ -15,9 +15,13 @@ executable dtnn
     default-extensions:
         GADTs
         KindSignatures
+        DataKinds
+        TypeOperators
         ScopedTypeVariables
         TypeApplications
         BangPatterns
+        ImportQualifiedPost
+        LambdaCase
     build-depends:    base ^>=4.17.2.0
                     , singletons
                     , hmatrix
