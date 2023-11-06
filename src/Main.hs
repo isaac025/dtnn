@@ -2,10 +2,12 @@ module Main where
 
 import Control.Monad
 import Control.Monad.Random
+import Data.Binary qualified as B
 import Data.Kind
 import Data.List
 import Data.Maybe
 import Data.Singletons
+import GHC.Generics (Generic)
 import GHC.TypeLits
 import Numeric.LinearAlgebra.Static
 import System.Environment
@@ -15,6 +17,9 @@ data Weights i o = W
     { wBiases :: !(R o)
     , wNodes :: !(L o i)
     }
+    deriving (Show, Generic)
+
+instance (KnownNat i, KnownNat o) => B.Binary (Weights i o)
 
 data Network :: Nat -> [Nat] -> Nat -> Type where
     O :: !(Weights i o) -> Network i '[] o
@@ -22,8 +27,44 @@ data Network :: Nat -> [Nat] -> Nat -> Type where
 
 infixr 5 :&~
 
+instance (KnownNat i, SingI hs, KnownNat o) => B.Binary (Network i hs o) where
+    put = putNet
+    get = getNet
+
+putNet :: (KnownNat i, KnownNat o) => Network i hs o -> B.Put
+putNet = \case
+    O w -> B.put w
+    w :&~ n -> B.put w *> putNet n
+
+getNet :: forall i hs o. (KnownNat i, KnownNat o) => Sing hs -> B.Get (Network i hs o)
+getNet = \case
+    SNil -> o <$> get
+    SNat `SCons` ss -> (:&~) <$> B.get <*> getNet ss
+
 data OpaqueNet :: Nat -> Nat -> Type where
     ONet :: Network i hs o -> OpaqueNet i o
+
+putONet :: (KnownNat i, KnownNat o) => OpaqueNet i o -> B.Put
+putONet (ONet net) = do
+    B.put (hiddenStruct net)
+    putNet net
+
+getONet :: (KnownNat i, KnownNat o) => B.Get (OpaqueNet i o)
+getONet = do
+    hs <- B.get
+    withSomeSing hs $ \ss -> ONet <$> getNet ss
+
+instance (KnownNat i, KnownNat o) => B.Binary (OpaqueNet i o) where
+    put = putONet
+    get = getONet
+
+type OpaqueNet' i o r = (forall hs. Network i hs o -> r) -> r
+
+hiddenStruct :: Network i hs o -> [Integer]
+hiddenStruct = \case
+    O _ -> []
+    _ :&~ (n' :: Network h hs' o) ->
+        natVal (Proxy @h) : hiddenStruct n'
 
 logistic :: (Floating a) => a -> a
 logistic x = 1 / (1 + exp (-x))
@@ -72,6 +113,25 @@ numHiddens (ONet n) = go n
     go :: Network i hs o -> Int
     go = \case
         O _ -> O
+        _ :&~ n' -> 1 + go n'
+
+runOpaqueNet' :: (KnownNat i, KnownNat o) => OpaqueNet' i o (R o) -> R i -> R o
+runOpaqueNet' oN x = oN (\n -> runNet n x)
+
+oNet' :: Network i hs o -> OpaqueNet' i o r
+oNet' n = \f -> f n
+
+withRandomONet' :: (MonadRandom m, KnownNat i, KnownNat o) => [Integer] -> (forall hs. Network i hs o -> m r) -> m r
+withRandomONet' hs f =
+    withSomeSing hs $ \ss -> do
+        net <- randomNet' ss
+        f net
+numHiddens' :: OpaqueNet' i o Int -> Int
+numHiddens' oN = oN go
+  where
+    go :: Network i hs o -> Int
+    go = \case
+        O _ -> 0
         _ :&~ n' -> 1 + go n'
 
 train ::
